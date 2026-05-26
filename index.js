@@ -247,7 +247,22 @@ async function startApolloServer(typeDefs, resolvers) {
       const createdAt = new Date().toISOString();
 
       const savedIds = [];
+      const skippedIds = [];
       for (const lisanceDocId of cleanIds) {
+        const existing = await collectionRef
+          .where("lisanceDocId", "==", lisanceDocId)
+          .limit(1)
+          .get();
+
+        if (!existing.empty) {
+          skippedIds.push({
+            id: existing.docs[0].id,
+            lisanceDocId,
+            reason: "already exists",
+          });
+          continue;
+        }
+
         const docRef = await collectionRef.add({
           lisanceDocId,
           createdAt,
@@ -259,6 +274,8 @@ async function startApolloServer(typeDefs, resolvers) {
         success: true,
         count: savedIds.length,
         saved: savedIds,
+        skippedCount: skippedIds.length,
+        skipped: skippedIds,
       });
     } catch (error) {
       res.status(500).json({
