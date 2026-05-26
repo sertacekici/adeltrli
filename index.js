@@ -377,6 +377,114 @@ async function startApolloServer(typeDefs, resolvers) {
     }
   });
 
+  // Secilen lisans(lar)in bitis tarihini uzatir. mode: "addYear" (years kadar yil ekle) | "setDate" (newFinishDate olarak ayarla).
+  // Body: { lisanceDocIds: string[], mode?: "addYear"|"setDate", years?: number, newFinishDate?: string, deleteRequests?: boolean }
+  app.options("/adeluzatmaislem", uzatmatalepCors);
+  app.post("/adeluzatmaislem", uzatmatalepCors, jsonParser, async (req, res) => {
+    try {
+      const body = req.body || {};
+      let ids = body.lisanceDocIds || body.documentIds || body.ids;
+      if (typeof ids === "string") ids = [ids];
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "lisanceDocIds (array) is required",
+        });
+      }
+
+      const mode = body.mode === "setDate" ? "setDate" : "addYear";
+      const years = Number.isFinite(Number(body.years)) ? Number(body.years) : 1;
+      const newFinishDateInput = body.newFinishDate;
+      const deleteRequests = body.deleteRequests !== false; // default true
+
+      if (mode === "setDate") {
+        if (!newFinishDateInput || isNaN(new Date(newFinishDateInput).getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "newFinishDate is required and must be a valid date when mode is setDate",
+          });
+        }
+      }
+
+      const pad = (n) => String(n).padStart(2, "0");
+      const formatDate = (d) =>
+        `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+      const cleanIds = ids
+        .map((x) => (x === null || x === undefined ? "" : String(x).trim()))
+        .filter((x) => x.length > 0);
+
+      const updated = [];
+      const failed = [];
+      const deleted = [];
+
+      for (const lisanceDocId of cleanIds) {
+        try {
+          const lisRef = db.collection("lisances").doc(lisanceDocId);
+          const lisSnap = await lisRef.get();
+          if (!lisSnap.exists) {
+            failed.push({ lisanceDocId, reason: "lisance not found" });
+            continue;
+          }
+
+          const currentRaw = lisSnap.data().lisanceFinishDate;
+          let newFinishDate;
+
+          if (mode === "setDate") {
+            newFinishDate = formatDate(new Date(newFinishDateInput));
+          } else {
+            const base = currentRaw ? new Date(currentRaw) : new Date();
+            const baseDate = isNaN(base.getTime()) ? new Date() : base;
+            baseDate.setFullYear(baseDate.getFullYear() + years);
+            newFinishDate = formatDate(baseDate);
+          }
+
+          await lisRef.update({
+            lisanceFinishDate: newFinishDate,
+            lisanceStatus: "1",
+          });
+
+          updated.push({
+            lisanceDocId,
+            previousFinishDate: currentRaw || null,
+            newFinishDate,
+          });
+
+          if (deleteRequests) {
+            const reqSnap = await db
+              .collection("uzatmatalep")
+              .where("lisanceDocId", "==", lisanceDocId)
+              .get();
+            for (const d of reqSnap.docs) {
+              await d.ref.delete();
+              deleted.push({ id: d.id, lisanceDocId });
+            }
+          }
+        } catch (err) {
+          failed.push({ lisanceDocId, reason: err.message });
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        mode,
+        years: mode === "addYear" ? years : undefined,
+        newFinishDate: mode === "setDate" ? newFinishDateInput : undefined,
+        updatedCount: updated.length,
+        updated,
+        failedCount: failed.length,
+        failed,
+        deletedRequestCount: deleted.length,
+        deletedRequests: deleted,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  });
+
   app.post("/customerrequest", jsonParser, async (req, res) => {
     try {
       const {
