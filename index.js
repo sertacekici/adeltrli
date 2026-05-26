@@ -408,7 +408,7 @@ async function startApolloServer(typeDefs, resolvers) {
 
       const pad = (n) => String(n).padStart(2, "0");
       const formatDate = (d) =>
-        `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
       const cleanIds = ids
         .map((x) => (x === null || x === undefined ? "" : String(x).trim()))
