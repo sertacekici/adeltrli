@@ -214,7 +214,9 @@ async function startApolloServer(typeDefs, resolvers) {
   });
 
   // Gelen lisance document id'lerini firestore'a kaydeder.
-  app.post("/adeluzatmatalep", jsonParser, async (req, res) => {
+  const uzatmatalepCors = cors({ origin: true, credentials: true });
+  app.options("/adeluzatmatalep", uzatmatalepCors);
+  app.post("/adeluzatmatalep", uzatmatalepCors, jsonParser, async (req, res) => {
     try {
       const body = req.body || {};
       let ids = body.documentIds || body.ids || body.lisanceIds;
@@ -286,7 +288,7 @@ async function startApolloServer(typeDefs, resolvers) {
   });
 
   // uzatmatalep kayitlarini, lisans + musteri + urun bilgileri ile zenginlestirip dondurur.
-  app.get("/adeluzatmatalep", async (req, res) => {
+  app.get("/adeluzatmatalep", uzatmatalepCors, async (req, res) => {
     try {
       const snapshot = await db.collection("uzatmatalep").get();
 
