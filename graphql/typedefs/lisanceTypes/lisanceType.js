@@ -91,6 +91,8 @@ const lisanceType = gql`
       customerID: ID!
       newLisanceDate: String!
     ): ResponseAll!
+    bulkDeleteLisances(ids: [ID!]!): ResponseAll!
+    bulkUpdateLisanceStatus(ids: [ID!]!, status: String!): ResponseAll!
   }
 `;
 

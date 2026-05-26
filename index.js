@@ -213,6 +213,151 @@ async function startApolloServer(typeDefs, resolvers) {
     }
   });
 
+  // Gelen lisance document id'lerini firestore'a kaydeder.
+  app.post("/adeluzatmatalep", jsonParser, async (req, res) => {
+    try {
+      const body = req.body || {};
+      let ids = body.documentIds || body.ids || body.lisanceIds;
+
+      if (!ids && body.documentId) {
+        ids = [body.documentId];
+      }
+      if (typeof ids === "string") {
+        ids = [ids];
+      }
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "documentIds (array) is required",
+        });
+      }
+
+      const cleanIds = ids
+        .map((id) => (id === null || id === undefined ? "" : String(id).trim()))
+        .filter((id) => id.length > 0);
+
+      if (cleanIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "documentIds (array) is required",
+        });
+      }
+
+      const collectionRef = db.collection("uzatmatalep");
+      const createdAt = new Date().toISOString();
+
+      const savedIds = [];
+      for (const lisanceDocId of cleanIds) {
+        const docRef = await collectionRef.add({
+          lisanceDocId,
+          createdAt,
+        });
+        savedIds.push({ id: docRef.id, lisanceDocId });
+      }
+
+      res.status(201).json({
+        success: true,
+        count: savedIds.length,
+        saved: savedIds,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  });
+
+  // uzatmatalep kayitlarini, lisans + musteri + urun bilgileri ile zenginlestirip dondurur.
+  app.get("/adeluzatmatalep", async (req, res) => {
+    try {
+      const snapshot = await db.collection("uzatmatalep").get();
+
+      const records = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      const customerCache = new Map();
+      const productCache = new Map();
+
+      const getCustomer = async (id) => {
+        if (!id) return null;
+        if (customerCache.has(id)) return customerCache.get(id);
+        const snap = await db.collection("customers").doc(id).get();
+        const data = snap.exists ? snap.data() : null;
+        customerCache.set(id, data);
+        return data;
+      };
+
+      const getProduct = async (id) => {
+        if (!id) return null;
+        if (productCache.has(id)) return productCache.get(id);
+        const snap = await db.collection("products").doc(id).get();
+        const data = snap.exists ? snap.data() : null;
+        productCache.set(id, data);
+        return data;
+      };
+
+      const result = [];
+      for (const rec of records) {
+        const lisanceDocId = rec.lisanceDocId;
+        let lisanceData = null;
+        if (lisanceDocId) {
+          const lisanceSnap = await db
+            .collection("lisances")
+            .doc(lisanceDocId)
+            .get();
+          if (lisanceSnap.exists) lisanceData = lisanceSnap.data();
+        }
+
+        let customerName = null;
+        let customerPhone = null;
+        let productName = null;
+        let lisanceFinishDate = null;
+        let lisanceNote = null;
+
+        if (lisanceData) {
+          lisanceFinishDate = lisanceData.lisanceFinishDate || null;
+          lisanceNote = lisanceData.lisanceNote || null;
+
+          const customer = await getCustomer(lisanceData.lisanceCustomer);
+          if (customer) {
+            customerName = customer.customerName || null;
+            customerPhone = customer.customerPhone || null;
+          }
+
+          const product = await getProduct(lisanceData.lisanceProduct);
+          if (product) {
+            productName = product.productName || null;
+          }
+        }
+
+        result.push({
+          id: rec.id,
+          lisanceDocId,
+          createdAt: rec.createdAt || null,
+          customerName,
+          customerPhone,
+          lisanceNote,
+          lisanceFinishDate,
+          productName,
+        });
+      }
+
+      res.status(200).json({
+        success: true,
+        count: result.length,
+        data: result,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  });
+
   app.post("/customerrequest", jsonParser, async (req, res) => {
     try {
       const {

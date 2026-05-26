@@ -560,6 +560,77 @@ module.exports = {
       });
       return deleteResult;
     },
+    bulkDeleteLisances: async (parent, args, context) => {
+      try {
+        const ids = Array.isArray(args.ids) ? args.ids : [];
+        if (ids.length === 0) {
+          return { success: false, message: "No ids provided" };
+        }
+
+        const lisancesCol = db.collection("lisances");
+        const customersCol = db.collection("customers");
+        let deletedCount = 0;
+
+        for (const lid of ids) {
+          const ref = lisancesCol.doc(lid);
+          const snap = await ref.get();
+          if (!snap.exists) continue;
+
+          const customerID = snap.data().lisanceCustomer;
+          await ref.delete();
+
+          if (customerID) {
+            try {
+              await customersCol.doc(customerID).update({
+                customerLisances: FieldValue.arrayRemove(lid),
+              });
+            } catch (e) {
+              // müşteri yoksa veya alan yoksa atla
+            }
+          }
+          deletedCount += 1;
+        }
+
+        return {
+          success: true,
+          message: `${deletedCount} lisance deleted`,
+        };
+      } catch (error) {
+        return { success: false, message: error.message };
+      }
+    },
+    bulkUpdateLisanceStatus: async (parent, args, context) => {
+      try {
+        const ids = Array.isArray(args.ids) ? args.ids : [];
+        const status = args.status;
+
+        if (ids.length === 0) {
+          return { success: false, message: "No ids provided" };
+        }
+        if (status !== "0" && status !== "1") {
+          return { success: false, message: "Invalid status (must be '0' or '1')" };
+        }
+
+        const lisancesCol = db.collection("lisances");
+        let updatedCount = 0;
+
+        for (const lid of ids) {
+          const ref = lisancesCol.doc(lid);
+          const snap = await ref.get();
+          if (!snap.exists) continue;
+
+          await ref.update({ lisanceStatus: status });
+          updatedCount += 1;
+        }
+
+        return {
+          success: true,
+          message: `${updatedCount} lisance status updated`,
+        };
+      } catch (error) {
+        return { success: false, message: error.message };
+      }
+    },
   },
 };
 
