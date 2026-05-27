@@ -225,7 +225,7 @@ async function startApolloServer(typeDefs, resolvers) {
         ids = [body.documentId];
       }
       if (typeof ids === "string") {
-        ids = [ids];
+        ids = ids.split(",");
       }
       if (!Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({
@@ -384,8 +384,15 @@ async function startApolloServer(typeDefs, resolvers) {
     try {
       const body = req.body || {};
       let ids = body.lisanceDocIds || body.documentIds || body.ids;
-      if (typeof ids === "string") ids = [ids];
+      if (typeof ids === "string") ids = ids.split(",");
       if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "lisanceDocIds (array) is required",
+        });
+      }
+      ids = ids.map((x) => String(x).trim()).filter((x) => x.length > 0);
+      if (ids.length === 0) {
         return res.status(400).json({
           success: false,
           message: "lisanceDocIds (array) is required",
@@ -476,6 +483,91 @@ async function startApolloServer(typeDefs, resolvers) {
         failed,
         deletedRequestCount: deleted.length,
         deletedRequests: deleted,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  });
+
+  // Sadece uzatma taleplerini siler (lisans dokumanina dokunmaz).
+  // Body: { lisanceDocIds?: string[], requestIds?: string[] }
+  // - lisanceDocIds: lisances koleksiyonundaki ID'ler; uzatmatalep koleksiyonunda eslesen tum kayitlar silinir.
+  // - requestIds: uzatmatalep koleksiyonundaki dogrudan doc ID'leri.
+  app.options("/adeluzatmatalepsil", uzatmatalepCors);
+  app.post("/adeluzatmatalepsil", uzatmatalepCors, jsonParser, async (req, res) => {
+    try {
+      const body = req.body || {};
+      const normalize = (v) => {
+        if (v === null || v === undefined) return [];
+        if (Array.isArray(v)) return v;
+        if (typeof v === "string") return v.split(",");
+        return [String(v)];
+      };
+
+      const lisanceDocIds = normalize(body.lisanceDocIds || body.documentIds)
+        .map((x) => String(x).trim())
+        .filter((x) => x.length > 0);
+
+      const requestIds = normalize(body.requestIds || body.ids)
+        .map((x) => String(x).trim())
+        .filter((x) => x.length > 0);
+
+      if (lisanceDocIds.length === 0 && requestIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "lisanceDocIds or requestIds is required",
+        });
+      }
+
+      const collectionRef = db.collection("uzatmatalep");
+      const deleted = [];
+      const notFound = [];
+      const failed = [];
+
+      for (const lisanceDocId of lisanceDocIds) {
+        try {
+          const snap = await collectionRef
+            .where("lisanceDocId", "==", lisanceDocId)
+            .get();
+          if (snap.empty) {
+            notFound.push({ lisanceDocId, reason: "no matching request" });
+            continue;
+          }
+          for (const d of snap.docs) {
+            await d.ref.delete();
+            deleted.push({ id: d.id, lisanceDocId });
+          }
+        } catch (err) {
+          failed.push({ lisanceDocId, reason: err.message });
+        }
+      }
+
+      for (const requestId of requestIds) {
+        try {
+          const ref = collectionRef.doc(requestId);
+          const snap = await ref.get();
+          if (!snap.exists) {
+            notFound.push({ requestId, reason: "request not found" });
+            continue;
+          }
+          await ref.delete();
+          deleted.push({ id: requestId, lisanceDocId: snap.data().lisanceDocId || null });
+        } catch (err) {
+          failed.push({ requestId, reason: err.message });
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        deletedCount: deleted.length,
+        deleted,
+        notFoundCount: notFound.length,
+        notFound,
+        failedCount: failed.length,
+        failed,
       });
     } catch (error) {
       res.status(500).json({

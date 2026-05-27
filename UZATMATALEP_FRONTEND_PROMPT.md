@@ -196,9 +196,146 @@ d) Uzatma talebi kaydını silme (sadece tarihi güncelle):
 ```
 
 **Önemli notlar:**
-- Yeni tarih formatı: `YYYY/MM/DD HH:mm:ss` (mevcut sistemle uyumlu).
+- Yeni tarih formatı: `YYYY-MM-DD` (örn. `2028-03-27`).
 - Güncellenen lisansın `lisanceStatus` alanı otomatik olarak `"1"` (aktif) yapılır.
 - Lisans bulunamazsa veya hata olursa `failed` dizisine düşer; diğerleri yine işlenir.
+
+---
+
+### 4) `POST /adeluzatmatalepsil`
+**Sadece uzatma talebini siler** — lisans dokümanına dokunmaz (bitiş tarihi değişmez). Talebi reddetmek / listeden kaldırmak için kullanılır.
+
+**Request body — desteklenen formatlar:**
+
+a) Lisans ID'leri ile (uzatmatalep koleksiyonunda eşleşen tüm kayıtlar silinir):
+```json
+{ "lisanceDocIds": ["05H7fu3V0DYkAspBnwmI", "01AFMjFkTc2EQKI57Nxs"] }
+```
+
+b) Virgülle ayrılmış string (C# / form gibi durumlar için):
+```json
+{ "lisanceDocIds": "05H7fu3V0DYkAspBnwmI,01AFMjFkTc2EQKI57Nxs" }
+```
+
+c) Doğrudan uzatmatalep doküman ID'leri ile:
+```json
+{ "requestIds": ["FX84Kp1AM4W8SOJDJR0y"] }
+```
+
+**Body alanları:**
+
+| Alan | Tip | Açıklama |
+|---|---|---|
+| `lisanceDocIds` | string[] veya virgülle ayrılmış string | `lisances` koleksiyonundaki ID'ler; eşleşen tüm uzatmatalep kayıtları silinir |
+| `requestIds` | string[] veya virgülle ayrılmış string | Doğrudan `uzatmatalep` doküman ID'leri |
+
+> En az birinin dolu olması gerekir.
+
+**Response — başarılı:**
+```json
+{
+  "success": true,
+  "deletedCount": 2,
+  "deleted": [
+    { "id": "FX84Kp1AM4W8SOJDJR0y", "lisanceDocId": "05H7fu3V0DYkAspBnwmI" },
+    { "id": "jfWGcoMbgBNeGYJfG6MK", "lisanceDocId": "01AFMjFkTc2EQKI57Nxs" }
+  ],
+  "notFoundCount": 0,
+  "notFound": [],
+  "failedCount": 0,
+  "failed": []
+}
+```
+
+---
+
+## C# İstemcisi — Virgülle Ayrılmış ID Gönderimi
+
+C# programınızda elinizde virgülle ayrılmış lisans ID listesi varsa (örn. `"id1,id2,id3"`), iki yöntemden birini kullanabilirsiniz.
+
+### Yöntem 1: Doğrudan virgüllü string gönder (en kısa)
+Endpoint hem array hem virgüllü string kabul ediyor.
+
+```csharp
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+
+var http = new HttpClient();
+string commaSeparatedIds = "05H7fu3V0DYkAspBnwmI,01AFMjFkTc2EQKI57Nxs,09G4tdIuOpG1TIiQ3zVN";
+
+// (a) Talep oluşturma — POST /adeluzatmatalep
+var addPayload = new { documentIds = commaSeparatedIds };
+var addResp = await http.PostAsync(
+    "https://adeltrlisances.herokuapp.com/adeluzatmatalep",
+    new StringContent(JsonSerializer.Serialize(addPayload), Encoding.UTF8, "application/json")
+);
+Console.WriteLine(await addResp.Content.ReadAsStringAsync());
+
+// (b) 1 yıl ekle — POST /adeluzatmaislem
+var extendPayload = new { lisanceDocIds = commaSeparatedIds, mode = "addYear", years = 1 };
+var extendResp = await http.PostAsync(
+    "https://adeltrlisances.herokuapp.com/adeluzatmaislem",
+    new StringContent(JsonSerializer.Serialize(extendPayload), Encoding.UTF8, "application/json")
+);
+Console.WriteLine(await extendResp.Content.ReadAsStringAsync());
+
+// (c) Talep sil — POST /adeluzatmatalepsil
+var delPayload = new { lisanceDocIds = commaSeparatedIds };
+var delResp = await http.PostAsync(
+    "https://adeltrlisances.herokuapp.com/adeluzatmatalepsil",
+    new StringContent(JsonSerializer.Serialize(delPayload), Encoding.UTF8, "application/json")
+);
+Console.WriteLine(await delResp.Content.ReadAsStringAsync());
+```
+
+### Yöntem 2: Önce diziye böl, sonra gönder (daha temiz)
+Daha okunabilir ve frontend'le ortak formatta:
+
+```csharp
+string commaSeparatedIds = "05H7fu3V0DYkAspBnwmI,01AFMjFkTc2EQKI57Nxs";
+string[] ids = commaSeparatedIds
+    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+    .Select(x => x.Trim())
+    .Where(x => x.Length > 0)
+    .ToArray();
+
+var payload = new { lisanceDocIds = ids, mode = "addYear", years = 1 };
+var resp = await http.PostAsJsonAsync(
+    "https://adeltrlisances.herokuapp.com/adeluzatmaislem",
+    payload
+);
+string json = await resp.Content.ReadAsStringAsync();
+Console.WriteLine(json);
+```
+
+### Belirli tarihe ayarlama (C#)
+```csharp
+var payload = new
+{
+    lisanceDocIds = ids,
+    mode = "setDate",
+    newFinishDate = "2027-12-31" // YYYY-MM-DD
+};
+await http.PostAsJsonAsync("https://adeltrlisances.herokuapp.com/adeluzatmaislem", payload);
+```
+
+### Endpoint Özeti (C# için hızlı referans)
+
+| İşlem | Endpoint | Method | Body örneği |
+|---|---|---|---|
+| Talep oluştur | `/adeluzatmatalep` | POST | `{ "documentIds": "id1,id2" }` |
+| Talepleri listele | `/adeluzatmatalep` | GET | — |
+| 1 yıl ekle | `/adeluzatmaislem` | POST | `{ "lisanceDocIds": "id1,id2", "mode": "addYear", "years": 1 }` |
+| Belirli tarihe ayarla | `/adeluzatmaislem` | POST | `{ "lisanceDocIds": "id1,id2", "mode": "setDate", "newFinishDate": "2027-12-31" }` |
+| Talebi sil (lisansa dokunma) | `/adeluzatmatalepsil` | POST | `{ "lisanceDocIds": "id1,id2" }` |
+
+**Notlar:**
+- Tüm POST'lar `Content-Type: application/json` ister.
+- ID'leri tek string olarak (`"id1,id2"`) veya dizi olarak (`["id1","id2"]`) gönderebilirsiniz; backend her ikisini de kabul eder.
+- `/adeluzatmaislem` başarılı olunca ilgili talepleri otomatik siler (`deleteRequests: false` göndererek bu davranışı kapatabilirsiniz).
+- Bitiş tarihi formatı: `YYYY-MM-DD` (örn. `2028-03-27`).
 
 ---
 
